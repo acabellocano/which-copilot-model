@@ -42,6 +42,59 @@ function parseOcrText(text: string): AvailableModel[] {
   });
 }
 
+function parseOcrRow(text: string, index: number): AvailableModel | null {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  const contextMatch = cleaned.match(/\b\d+(?:\.\d+)?[KMG]\b/i);
+  if (!contextMatch) return null;
+  const beforeContext = cleaned.slice(0, contextMatch.index);
+  const name = beforeContext.replace(/\b(Tools|Vision|Capabilities|Cost)\b/gi, "").trim();
+  if (!name || /^(name|context|size)$/i.test(name)) return null;
+  const values = [...cleaned.matchAll(/(?:In|Out|Cache\s*Read|Cache\s*Write|Read|Write)\s*:?\s*(\d+(?:\.\d+)?)/gi)].map((match) => Number(match[1]));
+  const unlabeled = [...cleaned.matchAll(/(?:^|\s)(\d+(?:\.\d+)?)(?=\s|$)/g)].map((match) => Number(match[1]));
+  const numbers = values.length >= 2 ? values : unlabeled.slice(-4);
+  if (numbers.length < 2) return null;
+  return {
+    id: `${Date.now()}-row-${index}`,
+    name,
+    contextSize: contextMatch[0].toUpperCase(),
+    capabilities: "Tools, Vision",
+    inputCost: numbers[0] ?? null,
+    outputCost: numbers[1] ?? null,
+    cacheReadCost: numbers[2] ?? null,
+    cacheWriteCost: numbers[3] ?? null
+  };
+}
+
+async function recognizeRows(worker: Awaited<ReturnType<typeof createWorker>>, file: File): Promise<AvailableModel[]> {
+  const image = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  const scale = 2;
+  canvas.width = image.width * scale;
+  const sourceHeight = image.height;
+  const header = Math.round(sourceHeight * .075);
+  const rowHeight = (sourceHeight - header) / 13;
+  const context = canvas.getContext("2d");
+  if (!context) return [];
+  await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_LINE });
+  const rows: AvailableModel[] = [];
+  for (let index = 0; index < 13; index += 1) {
+    const y = header + index * rowHeight;
+    const readColumn = async (left: number, right: number) => {
+      canvas.width = Math.max(1, Math.round((right - left) * image.width * scale));
+      canvas.height = Math.max(1, Math.round(rowHeight * scale));
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, left * image.width, y, (right - left) * image.width, rowHeight, 0, 0, canvas.width, canvas.height);
+      return (await worker.recognize(canvas)).data.text.replace(/\s+/g, " ").trim();
+    };
+    const name = await readColumn(0, .27);
+    const contextSize = await readColumn(.27, .4);
+    const costs = await readColumn(.5, 1);
+    const row = parseOcrRow(`${name} ${contextSize} ${costs}`, index);
+    if (row) rows.push(row);
+  }
+  return rows;
+}
+
 async function preprocessImage(file: File) {
   const image = await createImageBitmap(file);
   const canvas = document.createElement("canvas");
@@ -81,7 +134,8 @@ export default function ModelWorkbench() {
       const preparedExtracted = parseOcrWords(preparedResult.data.words as OcrWord[], prepared.width);
       const wordExtracted = originalExtracted.length >= preparedExtracted.length ? originalExtracted : preparedExtracted;
       const text = originalResult.data.text + "\n" + preparedResult.data.text;
-      const extracted = wordExtracted.length >= 3 ? wordExtracted : parseOcrText(text);
+      const rowExtracted = await recognizeRows(worker, file);
+      const extracted = rowExtracted.length >= wordExtracted.length ? rowExtracted : (wordExtracted.length >= 3 ? wordExtracted : parseOcrText(text));
       if (!extracted.length) setStatus("OCR completed, but no model rows were recognized. Add rows manually below.");
       else { setModels(extracted); setStatus(`Extracted ${extracted.length} model rows. Review the table before fetching benchmarks.`); }
     } finally { await worker.terminate(); setLoading(false); }
