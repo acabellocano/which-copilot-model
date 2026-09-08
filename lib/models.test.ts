@@ -23,4 +23,8 @@ describe("model matching and ranking", () => {
     expect(rows[0].cacheReadCost).toBeNull();
     expect(rows[0].cacheWriteCost).toBeNull();
   });
+  it("parses OCR.space markdown table pricing", () => {
+    const rows = parseModelTableText("| Claude Fable 5.1 | 1M | Tools Vision | In: 1000 | Out: 5000 | Cache Read: 25 | Cache Write: 1250 |");
+    expect(rows[0]).toMatchObject({ inputCost: 1000, outputCost: 5000, cacheReadCost: 25, cacheWriteCost: 1250 });
+  });
 });

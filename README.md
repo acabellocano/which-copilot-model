@@ -12,15 +12,13 @@ A small web app for comparing models visible in a VS Code model selector with De
 
 OCR output is deliberately editable: screenshots and benchmark naming conventions are not perfectly consistent, so review the extracted rows before trusting a recommendation.
 
-For maximum accuracy, configure a server-side OCR provider before running the app:
+For maximum accuracy, this project is configured locally for OCR.space Engine 3, which is the provider's table-focused engine:
 
 ```powershell
-$env:GOOGLE_CLOUD_VISION_API_KEY = "your-key"
-# Or:
-$env:OCR_SPACE_API_KEY = "your-key"
+npm run dev
 ```
 
-Google Cloud Vision is preferred. Without either variable, the app falls back to local Tesseract.js OCR. Incomplete rows are retained and highlighted in amber for manual correction.
+The key lives in `.env.local` and is ignored by git. To switch to OCR.space Engine 2, set `OCR_SPACE_ENGINE=2`; Engine 1 is intentionally not supported. Without an OCR.space key, the app falls back to local Tesseract.js OCR. Incomplete rows are retained and highlighted in amber for manual correction.
 
 ## Run locally
 
