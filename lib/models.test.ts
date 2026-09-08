@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { modelNamesMatch, normalizeModelName, rankModels } from "./models";
 import { parseDeepSWEHtml } from "./deepswe";
+import { parseModelTableText } from "./ocr";
 
 describe("model matching and ranking", () => {
   it("normalizes effort annotations and punctuation", () => {
@@ -15,5 +16,11 @@ describe("model matching and ranking", () => {
   it("parses the visible DeepSWE leaderboard row shape", () => {
     const rows = parseDeepSWEHtml("<div>gpt-6-astra [ xhigh ] 74 % ± 3 % Avg cost $6.52 Out tok 30k Steps 29</div>");
     expect(rows[0]).toMatchObject({ model: "gpt-6-astra", effort: "xhigh", passAt1: .74, avgCost: 6.52, outputTokens: 30000, steps: 29 });
+  });
+  it("keeps incomplete OCR rows for manual review", () => {
+    const rows = parseModelTableText("Claude Sonnet 5 1M Tools Vision In: 200 Out: 1000");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cacheReadCost).toBeNull();
+    expect(rows[0].cacheWriteCost).toBeNull();
   });
 });

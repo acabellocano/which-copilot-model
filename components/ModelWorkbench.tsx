@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { createWorker, PSM } from "tesseract.js";
 import { AvailableModel, BenchmarkSnapshot, modelNamesMatch, rankModels } from "@/lib/models";
+import { parseModelTableText } from "@/lib/ocr";
 
 const starterModels: AvailableModel[] = [];
 
@@ -124,7 +125,22 @@ export default function ModelWorkbench() {
 
   async function handleImage(file?: File) {
     if (!file) return;
-    setLoading(true); setStatus("OCR is reading the screenshot locally...");
+    setLoading(true); setStatus("Sending the screenshot to the high-accuracy OCR provider...");
+    try {
+      const form = new FormData();
+      form.append("image", file);
+      const response = await fetch("/api/ocr", { method: "POST", body: form });
+      const cloud = await response.json();
+      if (response.ok && cloud.models?.length) {
+        setModels(cloud.models);
+        setStatus(`${cloud.provider} extracted ${cloud.models.length} rows. Missing cells are highlighted for review.`);
+        setLoading(false);
+        return;
+      }
+    } catch {
+      // Fall through to local OCR when cloud OCR is not configured or unavailable.
+    }
+    setStatus("Cloud OCR unavailable; using local OCR fallback...");
     const worker = await createWorker("eng");
     try {
       await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: "1" });
@@ -170,10 +186,10 @@ export default function ModelWorkbench() {
         <div className="dropzone">
           <strong>Drop a screenshot here or choose a file</strong>
           <input type="file" accept="image/*" disabled={loading} onChange={(event) => handleImage(event.target.files?.[0])} />
-          <p className="hint">OCR runs in your browser. Nothing is uploaded for screenshot processing.</p>
+          <p className="hint">The app tries high-accuracy server OCR first, then falls back to local OCR.</p>
         </div>
         <div className="toolbar"><button className="button secondary" onClick={() => setModels([...models, { id: crypto.randomUUID(), name: "New model", contextSize: "1M", capabilities: "Tools, Vision", inputCost: null, outputCost: null, cacheReadCost: null, cacheWriteCost: null }])}>Add row</button></div>
-        {models.length === 0 ? <div className="empty">No models extracted yet.</div> : <div className="table-scroll"><table><thead><tr><th>Name</th><th>Context</th><th>In</th><th>Out</th><th>Cache read</th><th>Cache write</th><th /></tr></thead><tbody>{models.map((model) => <tr key={model.id}><td><input value={model.name} onChange={(event) => updateModel(model.id, "name", event.target.value)} /></td><td><input value={model.contextSize} onChange={(event) => updateModel(model.id, "contextSize", event.target.value)} /></td><td><input type="number" value={model.inputCost ?? ""} onChange={(event) => updateModel(model.id, "inputCost", event.target.value)} /></td><td><input type="number" value={model.outputCost ?? ""} onChange={(event) => updateModel(model.id, "outputCost", event.target.value)} /></td><td><input type="number" value={model.cacheReadCost ?? ""} onChange={(event) => updateModel(model.id, "cacheReadCost", event.target.value)} /></td><td><input type="number" value={model.cacheWriteCost ?? ""} onChange={(event) => updateModel(model.id, "cacheWriteCost", event.target.value)} /></td><td><button className="button secondary" onClick={() => setModels(models.filter((row) => row.id !== model.id))}>Remove</button></td></tr>)}</tbody></table></div>}
+        {models.length === 0 ? <div className="empty">No models extracted yet.</div> : <div className="table-scroll"><table><thead><tr><th>Name</th><th>Context</th><th>In</th><th>Out</th><th>Cache read</th><th>Cache write</th><th /></tr></thead><tbody>{models.map((model) => <tr key={model.id}><td><input className={!model.name ? "missing" : ""} value={model.name} onChange={(event) => updateModel(model.id, "name", event.target.value)} /></td><td><input className={!model.contextSize ? "missing" : ""} value={model.contextSize} onChange={(event) => updateModel(model.id, "contextSize", event.target.value)} /></td><td><input className={model.inputCost === null ? "missing" : ""} type="number" value={model.inputCost ?? ""} onChange={(event) => updateModel(model.id, "inputCost", event.target.value)} /></td><td><input className={model.outputCost === null ? "missing" : ""} type="number" value={model.outputCost ?? ""} onChange={(event) => updateModel(model.id, "outputCost", event.target.value)} /></td><td><input className={model.cacheReadCost === null ? "missing" : ""} type="number" value={model.cacheReadCost ?? ""} onChange={(event) => updateModel(model.id, "cacheReadCost", event.target.value)} /></td><td><input className={model.cacheWriteCost === null ? "missing" : ""} type="number" value={model.cacheWriteCost ?? ""} onChange={(event) => updateModel(model.id, "cacheWriteCost", event.target.value)} /></td><td><button className="button secondary" onClick={() => setModels(models.filter((row) => row.id !== model.id))}>Remove</button></td></tr>)}</tbody></table></div>}
       </section>
       <section className="panel">
         <h2>2. Load DeepSWE</h2>
