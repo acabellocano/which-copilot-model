@@ -32,6 +32,16 @@ function parseOcrWords(words: OcrWord[], imageWidth: number): AvailableModel[] {
   });
 }
 
+function parseOcrText(text: string): AvailableModel[] {
+  return text.split(/\r?\n/).flatMap((line, index) => {
+    const values = [...line.matchAll(/(?:In|Out|Cache\s*Read|Cache\s*Write)\s*:?\s*(\d+(?:\.\d+)?)/gi)].map((match) => Number(match[1]));
+    const context = line.match(/\b\d+[KMG]\b/i)?.[0];
+    const name = line.split(/\b\d+[KMG]\b/i)[0]?.replace(/\b(Tools|Vision|In|Out|Cache|Read|Write)\b/gi, "").trim();
+    if (!name || !context || values.length < 2 || /^(name|context|size|capabilities|cost)$/i.test(name)) return [];
+    return [{ id: `${Date.now()}-text-${index}`, name, contextSize: context, capabilities: "Tools, Vision", inputCost: values[0] ?? null, outputCost: values[1] ?? null, cacheReadCost: values[2] ?? null, cacheWriteCost: values[3] ?? null }];
+  });
+}
+
 async function preprocessImage(file: File) {
   const image = await createImageBitmap(file);
   const canvas = document.createElement("canvas");
@@ -66,8 +76,12 @@ export default function ModelWorkbench() {
     try {
       await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: "1" });
       const prepared = await preprocessImage(file);
-      const result = await worker.recognize(prepared.source);
-      const extracted = parseOcrWords(result.data.words as OcrWord[], prepared.width);
+      const [originalResult, preparedResult] = await Promise.all([worker.recognize(file), worker.recognize(prepared.source)]);
+      const originalExtracted = parseOcrWords(originalResult.data.words as OcrWord[], prepared.width / 2);
+      const preparedExtracted = parseOcrWords(preparedResult.data.words as OcrWord[], prepared.width);
+      const wordExtracted = originalExtracted.length >= preparedExtracted.length ? originalExtracted : preparedExtracted;
+      const text = originalResult.data.text + "\n" + preparedResult.data.text;
+      const extracted = wordExtracted.length >= 3 ? wordExtracted : parseOcrText(text);
       if (!extracted.length) setStatus("OCR completed, but no model rows were recognized. Add rows manually below.");
       else { setModels(extracted); setStatus(`Extracted ${extracted.length} model rows. Review the table before fetching benchmarks.`); }
     } finally { await worker.terminate(); setLoading(false); }
