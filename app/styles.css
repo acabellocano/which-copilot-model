@@ -42,6 +42,29 @@ td input, td select, .control select { border: 1px solid var(--line); border-rad
 .control { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; }
 .control select { width: auto; min-width: 150px; color: var(--ink); background: white; }
 .callout { background: var(--warm); border: 1px solid #f1dfb8; border-radius: 10px; padding: 12px 14px; color: #6e5524; font-size: 13px; }
+.callout.warning { background: #fff0d8; border-color: #e5a33b; }
+.callout.error { background: #fff0f0; border-color: #d98282; color: #8c3030; margin-top: 12px; }
+.data-inspector { margin-top: 14px; font-size: 13px; }
+.data-inspector h3 { margin: 0 0 8px; font-size: 15px; }
+.data-inspector table { margin-top: 10px; }
+.inspector-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.inspector-heading .toolbar { margin: 0; }
+.pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+.pagination .button { padding: 7px 10px; }
+.paste-import { margin: 10px 0 16px; }
+.paste-import summary { cursor: pointer; color: var(--accent); font-weight: 700; }
+.paste-import textarea { display: block; min-height: 90px; width: 100%; margin: 10px 0; border: 1px solid var(--line); border-radius: 8px; padding: 9px; resize: vertical; }
+.matched { color: var(--accent); }
+.unmatched { color: #9a6515; }
+.recommendation-controls { justify-content: space-between; }
+.weights { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 8px 0 14px; }
+.weights label { display: grid; grid-template-columns: 70px 1fr; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.triangle { position: relative; width: 190px; height: 95px; margin: 4px auto 12px; border-left: 2px solid var(--accent); border-bottom: 2px solid var(--accent); transform: skewY(-26deg); }
+.triangle::after { content: ""; position: absolute; left: 0; bottom: 0; width: 100%; height: 100%; border-top: 2px solid var(--accent); clip-path: polygon(0 100%, 100% 100%, 50% 0); }
+.triangle span { position: absolute; font-size: 11px; transform: skewY(26deg); }
+.triangle-quality { left: -12px; bottom: -22px; }
+.triangle-cost { right: -30px; bottom: -22px; }
+.triangle-speed { left: 70px; top: -22px; }
 .recommendation { background: #f2faf7; border: 1px solid #b8ded3; border-radius: 13px; padding: 16px; margin-top: 14px; }
 .recommendation strong { font-size: 20px; }
 .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }

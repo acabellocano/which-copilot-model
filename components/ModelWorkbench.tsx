@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createWorker, PSM } from "tesseract.js";
-import { AvailableModel, BenchmarkSnapshot, modelNamesMatch, rankModels } from "@/lib/models";
+import { AvailableModel, BenchmarkSnapshot, modelNamesMatch, rankModels, RankingObjective } from "@/lib/models";
 import { parseModelTableText } from "@/lib/ocr";
 
 const starterModels: AvailableModel[] = [];
@@ -115,17 +115,60 @@ async function preprocessImage(file: File) {
 }
 
 export default function ModelWorkbench() {
-  const [models, setModels] = useState(starterModels);
+  const [models, setModels] = useState<AvailableModel[]>(() => {
+    if (typeof window === "undefined") return starterModels;
+    try { return JSON.parse(window.localStorage.getItem("ocr-models") ?? "[]"); } catch { return []; }
+  });
   const [snapshot, setSnapshot] = useState<BenchmarkSnapshot | null>(null);
-  const [objective, setObjective] = useState<"quality" | "cost" | "speed" | "efficiency">("efficiency");
+  const [objective, setObjective] = useState<RankingObjective>("efficiency");
+  const [minimumPassAt1, setMinimumPassAt1] = useState(0.5);
+  const [customWeights, setCustomWeights] = useState<[number, number, number]>([34, 33, 33]);
   const [status, setStatus] = useState("Upload a VS Code model-selector screenshot to begin.");
   const [loading, setLoading] = useState(false);
-  const ranked = useMemo(() => snapshot ? rankModels(models, snapshot.rows, objective) : [], [models, snapshot, objective]);
+  const [ocrError, setOcrError] = useState("");
+  const [benchmarkFilter, setBenchmarkFilter] = useState<"available" | "all">("available");
+  const [benchmarkPage, setBenchmarkPage] = useState(1);
+  const [showAllRecommendations, setShowAllRecommendations] = useState(false);
+  const ranked = useMemo(() => snapshot ? rankModels(models, snapshot.rows, objective, minimumPassAt1, customWeights) : [], [models, snapshot, objective, minimumPassAt1, customWeights]);
   const unmatched = useMemo(() => models.filter((model) => !snapshot?.rows.some((row) => modelNamesMatch(row.model, model.name))), [models, snapshot]);
+  const stale = snapshot?.generatedAt ? Date.now() - Date.parse(snapshot.generatedAt) > 7 * 24 * 60 * 60 * 1000 : false;
+  const benchmarkRows = useMemo(() => snapshot ? (benchmarkFilter === "all" ? snapshot.rows : snapshot.rows.filter((row) => models.some((model) => modelNamesMatch(row.model, model.name)))) : [], [snapshot, benchmarkFilter, models]);
+  const benchmarkPageSize = 15;
+  const benchmarkPageCount = Math.max(1, Math.ceil(benchmarkRows.length / benchmarkPageSize));
+  const visibleBenchmarkRows = benchmarkRows.slice((benchmarkPage - 1) * benchmarkPageSize, benchmarkPage * benchmarkPageSize);
+  const importInput = useRef<HTMLInputElement>(null);
+  const [pasted, setPasted] = useState("");
+  const date = (value: string) => new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  useEffect(() => { localStorage.setItem("ocr-models", JSON.stringify(models)); }, [models]);
+  useEffect(() => { setBenchmarkPage(1); }, [benchmarkFilter, snapshot, models.length]);
+
+  function saveModels() {
+    localStorage.setItem("ocr-models", JSON.stringify(models));
+    const blob = new Blob([JSON.stringify(models, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob); link.download = "which-copilot-models.json"; link.click(); URL.revokeObjectURL(link.href);
+    setStatus(`Saved ${models.length} OCR rows locally and to a JSON file.`);
+  }
+
+  function importModels(value: string) {
+    try {
+      const data = JSON.parse(value);
+      const rows = Array.isArray(data) ? data : data.models;
+      if (!Array.isArray(rows)) throw new Error("Expected a model array");
+      setModels(rows.map((row, index) => ({ ...row, id: row.id || `import-${Date.now()}-${index}` })));
+      setStatus(`Imported ${rows.length} saved model rows.`);
+    } catch (error) { setStatus(error instanceof Error ? error.message : "Unable to import saved model data."); }
+  }
+
+  function importPasted() {
+    const rows = parseModelTableText(pasted);
+    if (!rows.length) { setStatus("No model rows found in pasted text."); return; }
+    setModels(rows); setStatus(`Imported ${rows.length} model rows from pasted text.`);
+  }
 
   async function handleImage(file?: File) {
     if (!file) return;
-    setLoading(true); setStatus("Sending the screenshot to the high-accuracy OCR provider...");
+    setLoading(true); setOcrError(""); setStatus("Sending the screenshot to the high-accuracy OCR provider...");
     try {
       const form = new FormData();
       form.append("image", file);
@@ -137,10 +180,12 @@ export default function ModelWorkbench() {
         setLoading(false);
         return;
       }
-    } catch {
-      // Fall through to local OCR when cloud OCR is not configured or unavailable.
+      if (!response.ok || cloud.error) throw new Error(cloud.error || `Cloud OCR returned no model rows (HTTP ${response.status})`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown cloud OCR error";
+      setOcrError(message);
+      setStatus(`Cloud OCR failed: ${message}. Using local OCR fallback...`);
     }
-    setStatus("Cloud OCR unavailable; using local OCR fallback...");
     const worker = await createWorker("eng");
     try {
       await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: "1" });
@@ -188,7 +233,8 @@ export default function ModelWorkbench() {
           <input type="file" accept="image/*" disabled={loading} onChange={(event) => handleImage(event.target.files?.[0])} />
           <p className="hint">The app tries high-accuracy server OCR first, then falls back to local OCR.</p>
         </div>
-        <div className="toolbar"><button className="button secondary" onClick={() => setModels([...models, { id: crypto.randomUUID(), name: "New model", contextSize: "1M", capabilities: "Tools, Vision", inputCost: null, outputCost: null, cacheReadCost: null, cacheWriteCost: null }])}>Add row</button></div>
+        <div className="toolbar"><button className="button secondary" onClick={() => setModels([...models, { id: crypto.randomUUID(), name: "New model", contextSize: "1M", capabilities: "Tools, Vision", inputCost: null, outputCost: null, cacheReadCost: null, cacheWriteCost: null }])}>Add row</button><button className="button secondary" onClick={saveModels}>Save OCR results</button><button className="button secondary" onClick={() => importInput.current?.click()}>Import JSON</button><input ref={importInput} hidden type="file" accept=".json,application/json" onChange={async (event) => { const file = event.target.files?.[0]; if (file) importModels(await file.text()); event.target.value = ""; }} /></div>
+        <details className="paste-import"><summary>Paste previously saved OCR text</summary><textarea value={pasted} onChange={(event) => setPasted(event.target.value)} placeholder="Paste an OCR.space table or rows such as: Claude Sonnet 5 | 1M | Tools Vision | In: 1000 | Out: 5000" /><button className="button secondary" onClick={importPasted}>Use pasted rows</button></details>
         {models.length === 0 ? <div className="empty">No models extracted yet.</div> : <div className="table-scroll"><table><thead><tr><th>Name</th><th>Context</th><th>In</th><th>Out</th><th>Cache read</th><th>Cache write</th><th /></tr></thead><tbody>{models.map((model) => <tr key={model.id}><td><input className={!model.name ? "missing" : ""} value={model.name} onChange={(event) => updateModel(model.id, "name", event.target.value)} /></td><td><input className={!model.contextSize ? "missing" : ""} value={model.contextSize} onChange={(event) => updateModel(model.id, "contextSize", event.target.value)} /></td><td><input className={model.inputCost === null ? "missing" : ""} type="number" value={model.inputCost ?? ""} onChange={(event) => updateModel(model.id, "inputCost", event.target.value)} /></td><td><input className={model.outputCost === null ? "missing" : ""} type="number" value={model.outputCost ?? ""} onChange={(event) => updateModel(model.id, "outputCost", event.target.value)} /></td><td><input className={model.cacheReadCost === null ? "missing" : ""} type="number" value={model.cacheReadCost ?? ""} onChange={(event) => updateModel(model.id, "cacheReadCost", event.target.value)} /></td><td><input className={model.cacheWriteCost === null ? "missing" : ""} type="number" value={model.cacheWriteCost ?? ""} onChange={(event) => updateModel(model.id, "cacheWriteCost", event.target.value)} /></td><td><button className="button secondary" onClick={() => setModels(models.filter((row) => row.id !== model.id))}>Remove</button></td></tr>)}</tbody></table></div>}
       </section>
       <section className="panel">
@@ -196,12 +242,19 @@ export default function ModelWorkbench() {
         <p className="hint">The server fetches and parses the all-effort-level benchmark page. A browser cache is used if the live source is unavailable.</p>
         <button className="button" disabled={loading} onClick={loadBenchmark}>{loading ? "Working..." : "Fetch latest results"}</button>
         <p className="status">{status}</p>
-        {snapshot && <div className="callout">Source snapshot: {new Date(snapshot.fetchedAt).toLocaleString()} · {snapshot.rows.length} rows</div>}
-        <div className="toolbar control"><label htmlFor="objective">Primary objective</label><select id="objective" value={objective} onChange={(event) => setObjective(event.target.value as typeof objective)}><option value="quality">Quality (PASS@1)</option><option value="cost">Lowest benchmark cost</option><option value="speed">Speed (tokens + steps)</option><option value="efficiency">Balanced efficiency</option></select></div>
+        {snapshot && <div className={`callout ${stale ? "warning" : ""}`}>
+          <strong>{stale ? "Stale benchmark data" : "Benchmark data loaded"}</strong>
+          <br />Source generated {snapshot.generatedAt ? date(snapshot.generatedAt) : "unknown"} · fetched {date(snapshot.fetchedAt)} · {snapshot.rows.length} configurations
+          {snapshot.latestJob?.name && <><br />Latest job: {snapshot.latestJob.name}</>}
+        </div>}
+        {ocrError && <div className="callout error"><strong>Cloud OCR diagnostic</strong><br />{ocrError}<br /><span>Check the server environment key and provider quota, or continue with paste/import/local OCR.</span></div>}
+        {snapshot && <div className="data-inspector"><div className="inspector-heading"><h3>DeepSWE results ({benchmarkRows.length} shown)</h3><div className="toolbar control"><label htmlFor="benchmark-filter">Show</label><select id="benchmark-filter" value={benchmarkFilter} onChange={(event) => setBenchmarkFilter(event.target.value as typeof benchmarkFilter)}><option value="available">Models available in Copilot</option><option value="all">All benchmark configurations</option></select></div></div><div className="table-scroll"><table><thead><tr><th>Model</th><th>Effort</th><th>PASS@1</th><th>Avg cost</th><th>Output tokens</th><th>Steps</th></tr></thead><tbody>{visibleBenchmarkRows.map((row) => <tr key={row.config ?? `${row.model}-${row.effort}`}><td>{row.model}</td><td>{row.effort || "—"}</td><td>{(row.passAt1 * 100).toFixed(1)}%</td><td>${row.avgCost.toFixed(2)}</td><td>{row.outputTokens.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td><td>{row.steps.toFixed(1)}</td></tr>)}</tbody></table></div><div className="pagination"><span>Page {benchmarkPage} of {benchmarkPageCount}</span><button className="button secondary" disabled={benchmarkPage <= 1} onClick={() => setBenchmarkPage((page) => page - 1)}>Previous</button><button className="button secondary" disabled={benchmarkPage >= benchmarkPageCount} onClick={() => setBenchmarkPage((page) => page + 1)}>Next</button></div></div>}
+        <div className="toolbar control"><label htmlFor="objective">Objective</label><select id="objective" value={objective} onChange={(event) => setObjective(event.target.value as typeof objective)}><option value="efficiency">Balanced: quality + cost + speed</option><option value="quality">Quality only</option><option value="cost">Cost only</option><option value="speed">Speed only</option><option value="quality-cost">Quality + cost</option><option value="quality-speed">Quality + speed</option><option value="cost-speed">Cost + speed</option><option value="custom">Custom weights</option></select><label htmlFor="minimum-pass">Minimum PASS@1</label><select id="minimum-pass" value={minimumPassAt1} onChange={(event) => setMinimumPassAt1(Number(event.target.value))}><option value="0.5">50%</option><option value="0.6">60%</option><option value="0.65">65%</option><option value="0.7">70%</option></select></div>
+        {objective === "custom" && <div className="weights"><div className="triangle"><span className="triangle-quality">Quality {customWeights[0]}%</span><span className="triangle-cost">Cost {customWeights[1]}%</span><span className="triangle-speed">Speed {customWeights[2]}%</span></div>{[["Quality", 0], ["Cost", 1], ["Speed", 2]].map(([label, index]) => <label key={label as string}>{label as string}<input type="range" min="0" max="100" value={customWeights[index as number]} onChange={(event) => setCustomWeights((current) => { const selected = Number(event.target.value); const other = [0, 1, 2].filter((i) => i !== index); const remainder = 100 - selected; const total = current[other[0]] + current[other[1]]; const first = total ? Math.round(remainder * current[other[0]] / total) : Math.round(remainder / 2); const next: [number, number, number] = [...current]; next[index as number] = selected; next[other[0]] = first; next[other[1]] = remainder - first; return next; })} /></label>)}</div>}
       </section>
       <section className="panel panel-wide">
         <h2>3. Recommendations</h2>
-        {!snapshot ? <div className="empty">Fetch benchmark results to see matched recommendations.</div> : ranked.length === 0 ? <div className="empty">No model names matched yet. Try editing OCR names to match the benchmark labels.</div> : <><div className="recommendation"><span>Best match for {objective}</span><br /><strong>{ranked[0].model.name}</strong> · {ranked[0].row.model} [{ranked[0].row.effort}]<div className="chips"><span className="chip">PASS@1 {(ranked[0].row.passAt1 * 100).toFixed(0)}%</span><span className="chip">${ranked[0].row.avgCost.toFixed(2)} avg cost</span><span className="chip">{ranked[0].row.outputTokens.toLocaleString()} output tokens</span><span className="chip">{ranked[0].row.steps} steps</span></div></div><table><thead><tr><th>Available model</th><th>Benchmark effort</th><th>PASS@1</th><th>Avg cost</th><th>Tokens</th><th>Steps</th><th>Score</th></tr></thead><tbody>{ranked.map(({ model, row, score }) => <tr key={`${model.id}-${row.effort}`}><td>{model.name}</td><td>{row.effort}</td><td>{(row.passAt1 * 100).toFixed(0)}%</td><td>${row.avgCost.toFixed(2)}</td><td>{row.outputTokens.toLocaleString()}</td><td>{row.steps}</td><td>{(score * 100).toFixed(0)}</td></tr>)}</tbody></table>{unmatched.length > 0 && <p className="hint">Not matched to DeepSWE: {unmatched.map((model) => model.name).join(", ")}</p>}</>}
+        {!snapshot ? <div className="empty">Fetch benchmark results to see matched recommendations.</div> : ranked.length === 0 ? <div className="empty">No matched configurations meet the {Math.round(minimumPassAt1 * 100)}% PASS@1 threshold.</div> : <><div className="recommendation"><span>Best match for {objective === "efficiency" ? "balanced efficiency" : objective.replace("-", " + ")}</span><br /><strong>{ranked[0].model.name}</strong> · {ranked[0].row.model} [{ranked[0].row.effort}]<div className="chips"><span className="chip">PASS@1 {(ranked[0].row.passAt1 * 100).toFixed(0)}%</span><span className="chip">${ranked[0].row.avgCost.toFixed(2)} avg cost</span><span className="chip">{ranked[0].row.outputTokens.toLocaleString()} output tokens</span><span className="chip">{ranked[0].row.steps.toFixed(0)} steps</span><span className="chip">Score {(ranked[0].score * 100).toFixed(0)}%</span></div><p className="hint">Only configurations at or above {Math.round(minimumPassAt1 * 100)}% PASS@1 are scored. Quality uses PASS@1, cost uses average benchmark cost, and speed combines output tokens with agent steps.</p></div><div className="toolbar recommendation-controls"><strong>{showAllRecommendations ? "All eligible configurations" : "Top 10 picks"}</strong><button className="button secondary" onClick={() => setShowAllRecommendations((value) => !value)}>{showAllRecommendations ? "Show top 10" : `Show all ${ranked.length}`}</button></div><table><thead><tr><th>Available model</th><th>Benchmark effort</th><th>PASS@1</th><th>Avg cost</th><th>Tokens</th><th>Steps</th><th>Score</th></tr></thead><tbody>{(showAllRecommendations ? ranked : ranked.slice(0, 10)).map(({ model, row, score }) => <tr key={`${model.id}-${row.config ?? `${row.model}-${row.effort}`}`}><td>{model.name}</td><td>{row.effort}</td><td>{(row.passAt1 * 100).toFixed(0)}%</td><td>${row.avgCost.toFixed(2)}</td><td>{row.outputTokens.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td><td>{row.steps.toFixed(0)}</td><td>{(score * 100).toFixed(0)}%</td></tr>)}</tbody></table>{unmatched.length > 0 && <p className="hint unmatched">Not matched to DeepSWE ({unmatched.length}): {unmatched.map((model) => model.name).join(", ")}</p>}{unmatched.length === 0 && models.length > 0 && <p className="hint matched">All {models.length} extracted models matched to at least one DeepSWE configuration.</p>}</>}
       </section>
     </div>
   </main>;
