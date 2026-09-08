@@ -1,17 +1,53 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { createWorker } from "tesseract.js";
+import { createWorker, PSM } from "tesseract.js";
 import { AvailableModel, BenchmarkSnapshot, modelNamesMatch, rankModels } from "@/lib/models";
 
 const starterModels: AvailableModel[] = [];
 
-function parseOcr(text: string): AvailableModel[] {
-  return text.split(/\r?\n/).flatMap((line, index) => {
-    const match = line.match(/^(.*?)\s+(\d+[KMG])\s+.*?In:\s*([\d.]+).*?Out:\s*([\d.]+)/i);
-    if (!match) return [];
-    return [{ id: `${Date.now()}-${index}`, name: match[1].trim(), contextSize: match[2], capabilities: "Tools, Vision", inputCost: Number(match[3]), outputCost: Number(match[4]), cacheReadCost: null, cacheWriteCost: null }];
+type OcrWord = { text: string; confidence: number; bbox: { x0: number; y0: number; x1: number; y1: number } };
+
+function numberAfter(words: string[], label: string) {
+  const index = words.findIndex((word) => word.toLowerCase().replace(/[^a-z]/g, "").startsWith(label));
+  const value = index >= 0 ? words[index + 1]?.replace(/[^\d.]/g, "") : "";
+  return value ? Number(value) : null;
+}
+
+function parseOcrWords(words: OcrWord[], imageWidth: number): AvailableModel[] {
+  const rows: OcrWord[][] = [];
+  for (const word of words.filter((item) => item.text.trim() && item.confidence >= 20).sort((a, b) => a.bbox.y0 - b.bbox.y0)) {
+    const row = rows.find((items) => Math.abs(items[0].bbox.y0 - word.bbox.y0) < 18);
+    if (row) row.push(word); else rows.push([word]);
+  }
+  return rows.flatMap((row, index) => {
+    const ordered = row.sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    const text = ordered.map((word) => word.text);
+    const name = ordered.filter((word) => word.bbox.x0 < imageWidth * .27).map((word) => word.text).join(" ").trim();
+    const context = ordered.find((word) => word.bbox.x0 >= imageWidth * .27 && word.bbox.x0 < imageWidth * .4 && /\d+[KMG]/i.test(word.text))?.text;
+    if (!name || !context || /^(name|context|size|capabilities|cost)$/i.test(name)) return [];
+    const labelled = (label: string) => numberAfter(text, label);
+    const numeric = ordered.filter((word) => word.bbox.x0 >= imageWidth * .5 && /^\d+(?:\.\d+)?$/.test(word.text.replace(/,/g, ""))).map((word) => Number(word.text.replace(/,/g, "")));
+    return [{ id: `${Date.now()}-${index}`, name, contextSize: context, capabilities: "Tools, Vision", inputCost: labelled("in") ?? numeric[0] ?? null, outputCost: labelled("out") ?? numeric[1] ?? null, cacheReadCost: labelled("cacheread") ?? numeric[2] ?? null, cacheWriteCost: labelled("cachewrite") ?? numeric[3] ?? null }];
   });
+}
+
+async function preprocessImage(file: File) {
+  const image = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width * 2;
+  canvas.height = image.height * 2;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Unable to prepare screenshot for OCR");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  for (let index = 0; index < pixels.data.length; index += 4) {
+    const luminance = pixels.data[index] * .299 + pixels.data[index + 1] * .587 + pixels.data[index + 2] * .114;
+    const value = Math.max(0, Math.min(255, (255 - luminance) * 1.35));
+    pixels.data[index] = pixels.data[index + 1] = pixels.data[index + 2] = value;
+  }
+  context.putImageData(pixels, 0, 0);
+  return { source: await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Unable to prepare screenshot")), "image/png")), width: canvas.width };
 }
 
 export default function ModelWorkbench() {
@@ -28,8 +64,10 @@ export default function ModelWorkbench() {
     setLoading(true); setStatus("OCR is reading the screenshot locally...");
     const worker = await createWorker("eng");
     try {
-      const result = await worker.recognize(file);
-      const extracted = parseOcr(result.data.text);
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: "1" });
+      const prepared = await preprocessImage(file);
+      const result = await worker.recognize(prepared.source);
+      const extracted = parseOcrWords(result.data.words as OcrWord[], prepared.width);
       if (!extracted.length) setStatus("OCR completed, but no model rows were recognized. Add rows manually below.");
       else { setModels(extracted); setStatus(`Extracted ${extracted.length} model rows. Review the table before fetching benchmarks.`); }
     } finally { await worker.terminate(); setLoading(false); }
@@ -67,7 +105,7 @@ export default function ModelWorkbench() {
           <p className="hint">OCR runs in your browser. Nothing is uploaded for screenshot processing.</p>
         </div>
         <div className="toolbar"><button className="button secondary" onClick={() => setModels([...models, { id: crypto.randomUUID(), name: "New model", contextSize: "1M", capabilities: "Tools, Vision", inputCost: null, outputCost: null, cacheReadCost: null, cacheWriteCost: null }])}>Add row</button></div>
-        {models.length === 0 ? <div className="empty">No models extracted yet.</div> : <table><thead><tr><th>Name</th><th>Context</th><th>In</th><th>Out</th><th /></tr></thead><tbody>{models.map((model) => <tr key={model.id}><td><input value={model.name} onChange={(event) => updateModel(model.id, "name", event.target.value)} /></td><td><input value={model.contextSize} onChange={(event) => updateModel(model.id, "contextSize", event.target.value)} /></td><td><input type="number" value={model.inputCost ?? ""} onChange={(event) => updateModel(model.id, "inputCost", event.target.value)} /></td><td><input type="number" value={model.outputCost ?? ""} onChange={(event) => updateModel(model.id, "outputCost", event.target.value)} /></td><td><button className="button secondary" onClick={() => setModels(models.filter((row) => row.id !== model.id))}>Remove</button></td></tr>)}</tbody></table>}
+        {models.length === 0 ? <div className="empty">No models extracted yet.</div> : <div className="table-scroll"><table><thead><tr><th>Name</th><th>Context</th><th>In</th><th>Out</th><th>Cache read</th><th>Cache write</th><th /></tr></thead><tbody>{models.map((model) => <tr key={model.id}><td><input value={model.name} onChange={(event) => updateModel(model.id, "name", event.target.value)} /></td><td><input value={model.contextSize} onChange={(event) => updateModel(model.id, "contextSize", event.target.value)} /></td><td><input type="number" value={model.inputCost ?? ""} onChange={(event) => updateModel(model.id, "inputCost", event.target.value)} /></td><td><input type="number" value={model.outputCost ?? ""} onChange={(event) => updateModel(model.id, "outputCost", event.target.value)} /></td><td><input type="number" value={model.cacheReadCost ?? ""} onChange={(event) => updateModel(model.id, "cacheReadCost", event.target.value)} /></td><td><input type="number" value={model.cacheWriteCost ?? ""} onChange={(event) => updateModel(model.id, "cacheWriteCost", event.target.value)} /></td><td><button className="button secondary" onClick={() => setModels(models.filter((row) => row.id !== model.id))}>Remove</button></td></tr>)}</tbody></table></div>}
       </section>
       <section className="panel">
         <h2>2. Load DeepSWE</h2>
