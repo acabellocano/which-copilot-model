@@ -1,0 +1,56 @@
+{
+  "name": "which-copilot-model-companion",
+  "displayName": "Which Copilot Model · Inventory",
+  "description": "Export stable API-visible model metadata, not an exact inventory of the Copilot picker.",
+  "version": "0.1.0",
+  "publisher": "local-tools",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": ["Other"],
+  "extensionKind": ["ui"],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "whichCopilotModel.exportInventory",
+        "title": "Export Inventory",
+        "category": "Which Copilot Model"
+      },
+      {
+        "command": "whichCopilotModel.copyInventory",
+        "title": "Copy Inventory",
+        "category": "Which Copilot Model"
+      },
+      {
+        "command": "whichCopilotModel.openWorkbench",
+        "title": "Open Workbench with Inventory",
+        "category": "Which Copilot Model"
+      }
+    ],
+    "configuration": {
+      "title": "Which Copilot Model",
+      "properties": {
+        "whichCopilotModel.vendor": {
+          "type": "string",
+          "enum": ["copilot", "all"],
+          "default": "copilot",
+          "scope": "application",
+          "description": "Inventory scope: Copilot only, or all providers exposed by the stable language-model API. Neither guarantees exact picker coverage."
+        },
+        "whichCopilotModel.workbenchUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "scope": "application",
+          "description": "Credential-free HTTPS URL, or HTTP on localhost, 127.0.0.1, or [::1]. Existing fragments are not allowed. Remote destinations require confirmation before sharing metadata with browser scripts."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "node --check src/extension.js",
+    "test": "node --test",
+    "package": "npx --yes @vscode/vsce@3.9.2 package --allow-missing-repository"
+  }
+}

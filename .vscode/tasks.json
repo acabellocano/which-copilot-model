@@ -1,0 +1,27 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Final artifact inspection",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"-e",
+				"const fs=require('node:fs'),cp=require('node:child_process'),crypto=require('node:crypto');console.log('INSPECTION_START',new Date().toISOString());for(const args of [['status','--short'],['diff','--stat'],['diff','--cached','--stat'],['diff','--','.',' :!package-lock.json'.trim()]]){const r=cp.spawnSync('git',args,{encoding:'utf8',maxBuffer:4*1024*1024});console.log('GIT_BEGIN',args.join(' '),'EXIT',r.status);console.log(r.stdout);console.error(r.stderr||'');console.log('GIT_END');}const p='extension/which-copilot-model-companion-0.1.0.vsix';const ps=\"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compression.ZipFile]::OpenRead((Join-Path (Get-Location) 'extension/which-copilot-model-companion-0.1.0.vsix')); try { @($z.Entries | ForEach-Object { $s=$_.Open(); $m=New-Object System.IO.MemoryStream; try { $s.CopyTo($m); [pscustomobject]@{name=$_.FullName;size=$_.Length;data=[Convert]::ToBase64String($m.ToArray())} } finally {$s.Dispose();$m.Dispose()} }) | ConvertTo-Json -Depth 3 -Compress } finally {$z.Dispose()}\";const r=cp.spawnSync('powershell.exe',['-NoProfile','-Command',ps],{encoding:'utf8',maxBuffer:2*1024*1024});console.log('VSIX_READ_EXIT',r.status);if(r.status!==0)throw new Error(r.stderr);const entries=JSON.parse(r.stdout);const secret=/(-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16}|sk-[A-Za-z0-9]{20,})/;let mismatches=0,hits=0,tests=0;for(const e of entries){const b=Buffer.from(e.data,'base64');const disk=e.name.startsWith('extension/')?e.name:null;const match=disk&&fs.existsSync(disk)?b.equals(fs.readFileSync(disk)):null;if(match===false)mismatches++;const flagged=secret.test(b.toString('utf8'))||/(?:^|\\/)(?:\\.env(?:\\.|$)|secrets?(?:\\.|$))|\\.(?:pem|key|p12|pfx)$/.test(e.name);if(flagged)hits++;if(/(?:^|\\/)(?:test|tests|node_modules)(?:\\/|$)|\\.(?:test|spec)\\./.test(e.name))tests++;console.log('VSIX_ENTRY',e.name,'BYTES',e.size,'MATCHES_SOURCE',match,'SECRET_PATTERN',flagged);if(e.name==='extension/package.json'){const m=JSON.parse(b.toString('utf8'));console.log('VSIX_METADATA',JSON.stringify({name:m.name,version:m.version,publisher:m.publisher,main:m.main,engines:m.engines}));}}const st=fs.statSync(p);console.log('VSIX_SUMMARY',JSON.stringify({bytes:st.size,mtimeUtc:st.mtime.toISOString(),sha256:crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'),files:entries.length,sourceMismatches:mismatches,secretPatternHits:hits,testsOrDependencies:tests}));const lock=JSON.parse(fs.readFileSync('package-lock.json','utf8'));console.log('LOCK_ROOT',JSON.stringify(lock.packages['']));for(const n of ['next','react','react-dom','yaml','typescript','vitest','postcss'])console.log('LOCK_VERSION',n,lock.packages['node_modules/'+n]?.version);const procs=cp.spawnSync('powershell.exe',['-NoProfile','-Command',\"Get-CimInstance Win32_Process | Where-Object {$_.Name -eq 'node.exe'} | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress\"],{encoding:'utf8'});console.log('FINAL_NODE_PROCESSES_EXIT',procs.status);console.log(procs.stdout);console.log('INSPECTION_COMPLETE',new Date().toISOString());process.exitCode=mismatches||hits||tests?1:0;"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Validation cleanup receipt",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"-e",
+				"const fs=require('node:fs'),cp=require('node:child_process');const p='.vscode/tasks.json';console.log('CLEANUP_START',new Date().toISOString());if(fs.existsSync(p))fs.unlinkSync(p);console.log('TEMP_TASK_EXISTS',fs.existsSync(p));for(const a of [['status','--short','--untracked-files=all'],['diff','--check']]){const r=cp.spawnSync('git',a,{encoding:'utf8'});console.log('GIT',a.join(' '),'EXIT',r.status);console.log(r.stdout);console.error(r.stderr||'');if(r.status!==0)process.exitCode=1;}console.log('CLEANUP_COMPLETE',new Date().toISOString());"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}
