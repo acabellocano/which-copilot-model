@@ -2,9 +2,9 @@ import type { BenchmarkDataset, BenchmarkResult } from "./benchmarks";
 import { canonicalModelName, estimatedCredits, InventoryModel, matchesModel } from "./inventory";
 
 export const TASK_PROFILES = {
-  engineering: { name: "Repository engineering", description: "Long-horizon fixes, debugging, and multi-file changes.", weights: { deepswe: 60, swebench: 30, aider: 10 } },
-  editing: { name: "Focused code edits", description: "Small changes, implementation, and polyglot editing.", weights: { deepswe: 20, swebench: 20, aider: 60 } },
-  balanced: { name: "Balanced coding", description: "Equal evidence across the three coding benchmarks.", weights: { deepswe: 34, swebench: 33, aider: 33 } }
+  engineering: { name: "Repository engineering", description: "Long-horizon fixes, debugging, and multi-file changes; overlapping Epoch composite stays opt-in.", weights: { deepswe: 30, swebench: 20, aider: 10, frontiercode: 25, cursorbench: 15, epoch: 0 } },
+  editing: { name: "Focused code edits", description: "Small changes, implementation, and polyglot editing; overlapping Epoch composite stays opt-in.", weights: { deepswe: 10, swebench: 10, aider: 45, frontiercode: 15, cursorbench: 20, epoch: 0 } },
+  balanced: { name: "Balanced coding", description: "Equal weight across five coding sources; overlapping Epoch composite stays opt-in.", weights: { deepswe: 20, swebench: 20, aider: 20, frontiercode: 20, cursorbench: 20, epoch: 0 } }
 } as const;
 
 export type DecisionObjective = "quality" | "value";
@@ -20,7 +20,7 @@ export function rankInventory(models: InventoryModel[], datasets: BenchmarkDatas
     const best = new Map<string, number>();
     for (const row of dataset.rows) {
       const name = canonicalModelName(row.model);
-      best.set(name, Math.max(best.get(name) ?? 0, row.score));
+      best.set(name, Math.max(best.get(name) ?? -Infinity, row.score));
     }
     return [dataset.id, [...best.values()]] as const;
   }));

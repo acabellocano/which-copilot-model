@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rankInventory } from "./decisions";
+import { rankInventory, TASK_PROFILES } from "./decisions";
 import { manualModel } from "./inventory";
 import type { BenchmarkDataset, BenchmarkResult } from "./benchmarks";
 
@@ -7,6 +7,19 @@ const row = (model: string, score: number, id = model): BenchmarkResult => ({ id
 const dataset = (id: string, rows: BenchmarkResult[]): BenchmarkDataset => ({ id, name: id, source: "https://example.com", fetchedAt: "2026-09-30T12:00:00Z", metric: "test score", description: "Unit fixture only", rows });
 
 describe("coding decision indices", () => {
+  it("ranks signed raw indices without replacing negative values with zero", () => {
+    const source = { ...dataset("epoch", [row("Alpha", -10), row("Beta", -20), row("Gamma", -30)]), scoreKind: "index" as const };
+    const results = rankInventory([manualModel("Alpha"), manualModel("Beta"), manualModel("Gamma")], [source], { epoch: 1 }, "quality", 0, 0);
+    expect(results.map(item => [item.model.name, item.index])).toEqual([["Alpha", 1], ["Beta", .5], ["Gamma", 0]]);
+  });
+
+  it("keeps the overlapping Epoch composite opt-in for every preset", () => {
+    for (const profile of Object.values(TASK_PROFILES)) {
+      expect(profile.weights.epoch).toBe(0);
+      expect(profile.weights.frontiercode).toBeGreaterThan(0);
+      expect(profile.weights.cursorbench).toBeGreaterThan(0);
+    }
+  });
   it("retains separate inventory entries even when they share benchmark evidence", () => {
     const one = manualModel("Alpha");
     const two = { ...manualModel("Different display"), benchmarkAlias: "Alpha" };

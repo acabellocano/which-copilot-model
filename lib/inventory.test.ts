@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalModelName, emptyInventory, estimatedCredits, inventoryFromNames, manualModel, matchesModel, parseInventory } from "./inventory";
+import { canonicalModelName, emptyInventory, estimatedCredits, inventoryFromNames, manualModel, matchesModel, modelMatchStatus, parseInventory } from "./inventory";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -39,7 +39,14 @@ describe("conservative benchmark identity", () => {
     ["GPT-6 Astra", "gpt-6-astra [xhigh]"],
     ["Claude Sonnet 4.5", "Claude 4.5 Sonnet (high)"],
     ["Claude Sonnet 3.5", "anthropic/claude-3-5-sonnet-20241022"],
-    ["Gemini 3.8 Flash", "gemini-3-8-flash-preview"]
+    ["Gemini 3.8 Flash", "gemini-3-8-flash-preview"],
+    ["GPT-5.3-Codex", "GPT-5.3 Codex"],
+    ["Claude Opus 5.5", "Claude Opus 5.5"],
+    ["Claude Sonnet 5.5", "Claude Sonnet 5.5"],
+    ["GPT-6.1 Sol", "GPT-6.1 Sol"],
+    ["GPT-6 Luna", "GPT-6 Luna"],
+    ["GPT-6 Sol", "GPT-6 Sol"],
+    ["Grok 4.7", "Grok 4.7"]
   ])("matches formatting variants %s and %s", (left, right) => {
     expect(canonicalModelName(left)).toBe(canonicalModelName(right));
     expect(matchesModel(manualModel(left), right)).toBe(true);
@@ -62,6 +69,17 @@ describe("conservative benchmark identity", () => {
     const model = { ...manualModel("Evaluation codename"), benchmarkAlias: "GPT-6 Astra" };
     expect(matchesModel(model, "gpt-6-astra")).toBe(true);
     expect(matchesModel(model, "Evaluation codename")).toBe(false);
+  });
+
+  it("explains absent evidence versus aliases and never attributes Auto to an API backing model", () => {
+    const model = manualModel("Claude Opus 5.5");
+    expect(modelMatchStatus(model, [], 0)).toContain("No evidence loaded");
+    expect(modelMatchStatus(model, ["Claude Opus 5.5"], 6)).toContain("1 benchmark names matched");
+    expect(modelMatchStatus(model, ["Claude Opus 4.8"], 3)).toContain("does not mean the model is unavailable");
+    expect(modelMatchStatus({ ...model, benchmarkAlias: "Wrong" }, [model.name], 3)).toContain("Explicit alias");
+    const auto = { ...manualModel("Auto"), family: "gpt-5.3-codex", benchmarkAlias: "GPT-5.3 Codex" };
+    expect(matchesModel(auto, "GPT-5.3 Codex")).toBe(false);
+    expect(modelMatchStatus(auto, ["GPT-5.3 Codex"], 6)).toContain("routing policy");
   });
 });
 

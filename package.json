@@ -2,7 +2,9 @@
   "name": "which-copilot-model",
   "version": "0.2.0",
   "private": true,
-  "engines": { "node": ">=20.19.0" },
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -14,6 +16,8 @@
     "extension:package": "npm --prefix extension run package"
   },
   "dependencies": {
+    "cheerio": "^1.0.0",
+    "csv-parse": "^7.0.3",
     "next": "15.5.27",
     "react": "18.3.1",
     "react-dom": "18.3.1",
@@ -26,5 +30,7 @@
     "typescript": "5.6.2",
     "vitest": "4.1.11"
   },
-  "overrides": { "postcss": "8.5.28" }
+  "overrides": {
+    "postcss": "8.5.28"
+  }
 }

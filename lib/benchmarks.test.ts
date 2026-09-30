@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BENCHMARK_SOURCES, fetchBenchmarkDataset, parseBenchmarkImport, validateBenchmarkDataset, type BenchmarkDataset } from "./benchmarks";
+import { BENCHMARK_SOURCES, parseBenchmarkImport, validateBenchmarkDataset, type BenchmarkDataset } from "./benchmarks";
+import { fetchBenchmarkDataset } from "./benchmark-loaders";
 import { GET } from "../app/api/benchmarks/route";
 
 const canonical = (): BenchmarkDataset => ({
@@ -81,6 +82,16 @@ afterEach(() => {
 });
 
 describe("normalized benchmark imports", () => {
+  it("preserves raw signed indices without fake percentages and validates optional metadata", () => {
+    const data = canonical();
+    const input = { ...data, scoreKind: "index", rows: [{ ...data.rows[0], score: -25.5, releaseDate: "2026-09-01", benchmarkCount: 3 }] };
+    expect(parseBenchmarkImport(input)).toMatchObject({ scoreKind: "index", rows: [{ score: -25.5, releaseDate: "2026-09-01", benchmarkCount: 3 }] });
+    for (const score of [NaN, Infinity, "150", null]) expect(() => validateBenchmarkDataset({ ...input, rows: [{ ...input.rows[0], score }] })).toThrow(/score/);
+    for (const scoreKind of ["percent", null, "INDEX"]) expect(() => validateBenchmarkDataset({ ...input, scoreKind })).toThrow(/scoreKind/);
+    for (const benchmarkCount of [0, -1, 1.5, "3"]) expect(() => validateBenchmarkDataset({ ...input, rows: [{ ...input.rows[0], benchmarkCount }] })).toThrow(/benchmarkCount/);
+    expect(() => validateBenchmarkDataset({ ...input, rows: [{ ...input.rows[0], releaseDate: "2026-02-30" }] })).toThrow(/date/);
+  });
+
   it("namespaces canonical custom IDs without mutating input or merging distinct IDs", () => {
     const data = canonical();
     expect(parseBenchmarkImport({ ...data, schemaVersion: 1 }).id).toBe("custom:deepswe");
@@ -255,18 +266,29 @@ describe("allowlisted benchmark loaders", () => {
 describe("benchmark API", () => {
   it("returns successful sources alongside independent failures", async () => {
     const called: string[] = [];
+    const fixtures = new Map<string, string>([
+      [BENCHMARK_SOURCES[0].url, JSON.stringify(deepFixture)],
+      [BENCHMARK_SOURCES[2].url, aiderFixture]
+    ]);
+    const failedSources = BENCHMARK_SOURCES.filter((source) => !fixtures.has(source.url));
+    const sourceIds = new Map<string, string>([
+      ...failedSources.map((source): [string, string] => [source.url, source.id]),
+      ["https://epoch.ai/data/eci_scores.csv", "epoch"],
+      ["https://epoch.ai/data/processed_data_for_eci.csv", "epoch"],
+      ["https://epoch.ai/data/edi_scores.csv", "epoch"]
+    ]);
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       called.push(url);
-      if (url === BENCHMARK_SOURCES[0].url) return Response.json(deepFixture);
-      if (url === BENCHMARK_SOURCES[1].url) throw new Error("SWE-bench temporarily offline");
-      return new Response(aiderFixture);
+      const fixture = fixtures.get(url);
+      if (fixture !== undefined) return new Response(fixture);
+      throw new Error(`${sourceIds.get(url) ?? url} temporarily offline`);
     }));
     const response = await GET(new Request("http://localhost/api/benchmarks"));
     const body = await response.json();
     expect(response.status).toBe(200);
-    expect(called).toHaveLength(3);
+    expect(called).toHaveLength(8);
     expect(body.datasets.map((dataset: BenchmarkDataset) => dataset.id)).toEqual(["deepswe", "aider"]);
-    expect(body.errors).toEqual([{ id: "swebench", message: "SWE-bench temporarily offline" }]);
+    expect(body.errors).toEqual(failedSources.map((source) => ({ id: source.id, message: `${source.id} temporarily offline` })));
     expect(Number.isFinite(Date.parse(body.fetchedAt))).toBe(true);
   });
 
@@ -287,6 +309,7 @@ describe("benchmark API", () => {
     vi.stubGlobal("fetch", fetchMock);
     const response = await GET(new Request(`http://localhost/api/benchmarks?${query}`));
     expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: `source must be one of: ${BENCHMARK_SOURCES.map((source) => source.id).join(", ")}` });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

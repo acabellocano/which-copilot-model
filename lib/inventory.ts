@@ -104,6 +104,8 @@ export function canonicalModelName(value: string): string {
 }
 
 export function matchesModel(model: InventoryModel, benchmarkName: string): boolean {
+  // Auto is a router, not a stable checkpoint, even if API family/version names a backing model.
+  if (model.name.trim().toLowerCase() === "auto") return false;
   const target = canonicalModelName(benchmarkName);
   // An explicit alias replaces automatic matching, rather than broadening it.
   return !!target && canonicalModelName(model.benchmarkAlias || model.name) === target;
@@ -113,4 +115,14 @@ export function estimatedCredits(model: InventoryModel, inputTokens: number, out
   if (model.vendor !== "copilot" || model.inputCredits === null || model.outputCredits === null ||
     !Number.isFinite(inputTokens) || !Number.isFinite(outputTokens) || inputTokens < 0 || outputTokens < 0) return null;
   return (model.inputCredits * inputTokens + model.outputCredits * outputTokens) / 1_000_000;
+}
+
+export function modelMatchStatus(model: InventoryModel, benchmarkNames: readonly string[], loadedSources: number): string {
+  if (model.name.trim().toLowerCase() === "auto") return "Auto is a routing policy, not one benchmarkable model. API family/version is not a guaranteed selected checkpoint.";
+  if (!loadedSources) return "No evidence loaded. Refresh sources before diagnosing a name match.";
+  const count = benchmarkNames.filter(name => matchesModel(model, name)).length;
+  if (count) return `${count} benchmark names matched. Coverage is separate from whether the source is weighted in ranking.`;
+  return model.benchmarkAlias
+    ? `Explicit alias “${model.benchmarkAlias}” was not found in ${loadedSources} loaded sources. Clear or correct it; it replaces name matching.`
+    : `No exact normalized identity in ${loadedSources} loaded sources. This does not mean the model is unavailable in Copilot. The sources may not evaluate this checkpoint or may use a different label; inspect raw names before assigning an alias.`;
 }

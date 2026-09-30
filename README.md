@@ -39,10 +39,27 @@ Neither the app nor companion collects prompts, source code, workspace paths, ac
 | [DeepSWE](https://deepswe.datacurve.ai/) | Long-horizon engineering; PASS@1; observed effort configurations | API USD per task. Tokens/steps are not speed. |
 | [SWE-bench Verified](https://www.swebench.com/) | Verified **mini-SWE-agent only**; resolved percentage; harness version retained | USD per instance. Submission dates do not imply source freshness. |
 | [Aider Polyglot](https://aider.chat/docs/leaderboards/) | Single-model editing; final solve rate after **up to two attempts** | Positive total USD / test cases; measured seconds per case. Explicit multi-model runs excluded. |
+| [FrontierCode](https://cognition.com/frontiercode) | **1.1 Main only**; mergeability rubric score, unfair-internet runs zeroed; all published efforts | API USD per rollout and measured minutes converted to seconds; reported model-specific harness retained. |
+| [CursorBench](https://cursor.com/cursorbench) | **4.0 only**; ambiguous multi-file tasks in Cursor's agent | Published score and API USD per task from the results table; no speed inferred from tokens/steps. |
+| [Epoch software ECI](https://epoch.ai/eci?eciPreset=software) | **Software domain**, 2+ constituent benchmarks; locally refitted raw index | No per-task cost, latency or computed confidence interval. **Opt-in/zero preset weight** because it overlaps the other sources. |
 
 The server fetches fixed public sources through `GET /api/benchmarks`, with a 15-second timeout per source and hourly upstream caching. Successful sources update independently. Failed sources preserve the last valid browser snapshot and display an error. A failed source without cache is excluded from the active scoring denominator; this can change recommendations.
 
-Fetch timestamps describe retrieval, not evidence freshness. DeepSWE supplies a generation timestamp. SWE-bench and Aider lack a source-wide update timestamp in these feeds, so freshness remains **unknown** even when retrieval succeeds. Evaluation/submission dates are separate. Upstream schemas can change: failures stay visible and results are never fabricated.
+Fetch timestamps describe retrieval, not evidence freshness. DeepSWE supplies a generation timestamp. The other adapters lack a verified source-wide update timestamp, so freshness remains **unknown** even when retrieval succeeds. Evaluation/submission dates and model release dates are separate. Upstream schemas can change: failures stay visible and results are never fabricated. CursorBench version changes fail visibly rather than silently combining incompatible task sets.
+
+### Epoch software ECI is not the general ECI download
+
+Epoch computes domain-specific ECI in its browser. Its model-scores CSV contains **general** ECI, which is never substituted for software ECI here. This adapter combines the official model list, processed per-benchmark observations and fitted general benchmark difficulty/slopes. It uses Epoch's software preset (13 constituents as of September 30, 2026), takes each model's best observation per constituent, requires at least two, clips observations to 0.001–0.999, and fits capability by bounded logistic least squares on the unchanged difficulty/slope parameters.
+
+Results are explicitly **locally computed software ECI points**, not percentages or a copy of a separately published software-score feed. Confidence intervals are not computed; model release dates are labeled as releases, not evaluations. Inputs: [model scores](https://epoch.ai/data/eci_scores.csv), [processed observations](https://epoch.ai/data/processed_data_for_eci.csv), [difficulty/slopes](https://epoch.ai/data/edi_scores.csv). Attribution: Epoch AI, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); [methodology](https://epoch.ai/data/eci-documentation/domain-specific-eci). The preset is dated, not dynamically expanded; source-contract changes require review.
+
+Epoch already includes DeepSWE, SWE-bench, Aider and FrontierCode. All task presets therefore leave its weight at zero. Enable it as an alternative composite view, preferably disabling overlapping sources; it is not independent corroboration. Saved weights are preserved; reselect a task preset to adopt the new five-source weights.
+
+### Why a normal name can be unmatched
+
+Matching searches **loaded evidence**, not Copilot availability. A valid model name may simply be absent from older leaderboards. Open **Model matching diagnostics** for per-source “Matched”, “Not listed by normalized name” or “Source not loaded”. Clear a stale explicit alias before expecting automatic name matching. Generations/Codex/mini/pro/chat variants remain distinct; no cross-generation guess is made.
+
+**Auto** is a router, not one fixed checkpoint, and stays unscored even when API family/version mentions a backing model. Separate IDs such as utility models can share a display name; they remain separate inventory entries and may share evidence. The companion remains version **0.1.0**; adding server-side sources requires no extension update.
 
 ### How recommendations work
 
@@ -61,17 +78,18 @@ The scenario defaults to 10,000 uncached input + 2,000 output tokens. Credits ar
 
 ## Import additional benchmarks
 
-LiveCodeBench, SWE-bench Pro, Terminal-Bench, ProgramBench, and private evaluations can be imported as canonical JSON. State the metric and use scores from 0–1; do not mix incompatible harnesses/task versions in one population.
+LiveCodeBench, SWE-bench Pro, Terminal-Bench, ProgramBench, and private evaluations can be imported as canonical JSON. State the metric and use fractions from 0–1, or explicit index scores; do not mix incompatible harnesses/task versions in one population.
 
 | Field | Required content |
 | --- | --- |
 | `schemaVersion` | Optional `1`; other versions rejected. |
+| `scoreKind` | Optional `fraction` (default): score 0–1. Explicit `index`: raw finite signed score, displayed as points; ranking still uses within-source percentiles. |
 | `id`, `name`, `metric`, `description` | Nonempty strings describing one comparable evaluation population. |
 | `source` | Absolute, credential-free HTTPS provenance URL; never fetched by the importer. |
 | `fetchedAt` | ISO date or timestamp with timezone. |
 | `updatedAt` | Optional actual upstream update date/timestamp. |
 | `rows` | 1–20,000 real result objects, unique IDs; browser imports limited to 2 MB. |
-| Row fields | `id`, `model`, `score` (0–1), `effort`, `harness`, `costUsd`, `latencySeconds`; optional `evaluatedAt`. |
+| Row fields | `id`, `model`, `score`, `effort`, `harness`, `costUsd`, `latencySeconds`; optional `evaluatedAt`, `releaseDate`, positive integer `benchmarkCount`. |
 | Missing measurements | Explicit `null` for cost/time. USD is per task, seconds must be measured. |
 
 Imported IDs become `custom:<id>` and cannot replace built-in sources. Use a canonical ID of 1–249 lowercase letters, digits, dots, underscores or hyphens, starting with a letter or digit; an existing `custom:` prefix is accepted. Invalid IDs are rejected rather than rewritten into a potentially colliding ID. Reimporting the same canonical ID updates that custom dataset. Import validation keeps previous data on failure. No user-supplied URL fetching or arbitrary server file import is supported.
